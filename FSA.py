@@ -123,7 +123,7 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         beta_new = np.array(beta) - self.eta*dLdB
         
         if l:
-            loss = (1/N)*sum(np.array([int(i<=1) for i in ybx])*np.log(1+np.square(ybx-1))) + \
+            loss = (1/N)*sum(partial1*np.log(1+np.square(ybx-1))) + \
             self.s*np.linalg.norm(beta, ord=2)**2
             
             return beta_new, loss
@@ -270,13 +270,17 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
                title='Loss vs Iteration Number k='+str(k))
         plt.show()
     
-    # Getter function which returns best trained weights and selected indices.
     def getTrainedValues(self):
+        '''
+        Getter function which returns best trained weights and selected indices.
+        '''
         check_is_fitted(self, 'w_')
         return self.w_, self.SI_sets[self.best_run_ind]
     
-    # Getter function which returns, for all k values, weights, losses, 
-    # selected indices, and the overall best run index.
     def getFullValues(self):
+        '''
+        Getter function which returns, for all k values, weights, losses, 
+        selected indices, and the overall best run index.
+        '''
         check_is_fitted(self, 'w_')
         return self.weight_sets, self.loss_sets, self.SI_sets, self.best_run_ind
