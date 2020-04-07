@@ -8,6 +8,7 @@ from sklearn.utils.multiclass import unique_labels
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_X_y, check_is_fitted, check_array
 
+from sklearn.preprocessing import StandardScaler
 
 class FSAEstimator(BaseEstimator, ClassifierMixin):
     '''
@@ -62,20 +63,46 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         self.loadFunctions()
     
     def loadFunctions(self):
+        '''
+        Small math functions.
+        '''
+        
         # Simple Logistic function.
         self.sigmoid = lambda x: 1/(1+exp(-x))
         
-        # Simple softmax function.
-        self.softmax = lambda x,b: array([argmax(exp(xi.T@b)/sum(exp(xi.T@b)))+1 for xi in x])
-        
-        # Simple softmax function with probabilistic output.
-        self.softmax_prob = lambda x,b: array([(exp(xi.T@b)/sum(exp(xi.T@b))) for xi in x])
-        
         # Lorenz loss as described in FSA paper (Barbu et. Al.)
-        self.lorenzLoss = lambda v: np.sum((v<=1)*log(1+(v-1)**2),axis=0)
+        self.lorenzLoss = lambda v: np.sum((v<=1)*log(1+(v-1)**2))
         
         # Derivative of Lorentz loss w.r.t. general input.
         self.dLorenz = lambda v: (v<=1)*((2*(v-1))/(1+(v-1)**2))
+        
+        # Prepend ones to input.
+        self.prependOnes = lambda X: np.hstack((np.ones((X.shape[0],1),dtype=int),X))
+    
+    def softmax(self,x,prob=False):
+        '''
+        Simple softmax function for X@beta responses.
+        
+        Parameters:
+            - x: Array-like response data.
+            - prob: Boolean, determines if output is categorical or probabilistic.
+            If False, the output will be the argmax of the softmax, if True, 
+            the raw softmax probabilities will be returned.
+        '''
+        if prob:
+            output = []
+        else:
+            output = zeros((x.shape[0],1))
+        
+        for i,x_i in enumerate(x):
+            soft_row = []
+            for x_ij in x_i:
+                soft_row.append(exp(x_ij)/sum(exp(x_i)))
+            if prob:
+                output.append(soft_row)
+            else:
+                output[i] = argmax(soft_row)
+        return output
     
     def labelsToOneHot(self,labels):
         '''
@@ -87,12 +114,11 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         
         one_hot_labels = []
         for label in int_labels:
-            next_label = zeros(r)
-            next_label[label-1] = 1
+            next_label = zeros(r+1)
+            next_label[label] = 1
             one_hot_labels.append(next_label)
         
         return np.array(one_hot_labels)
-    
     
     def fullLorenzLoss(self, N, ll_val, beta):
         '''
@@ -106,9 +132,7 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         Returns:
             - Floating point value indicating loss.
         '''       
-        result = (1/N)*self.lorenzLoss(ll_val) - self.multi*log(2) + \
-        self.s*np.linalg.norm(beta, ord=2)**2
-        
+        result = (1/N)*ll_val - self.multi*log(2) + self.s*np.linalg.norm(beta, ord=2)**2
         return result
 
     def invSchedule(self, M, k, i):
@@ -122,7 +146,7 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         Returns:
             - Integer representing number of features to be kept on the schedule.
         '''
-        Mi = k + (M - k)*max(0, (self.N_iter - 2*i)/(2*i*self.mu + self.N_iter))
+        Mi = k+(M-k)*max(0,(self.N_iter-2*i)/(2*i*self.mu+self.N_iter))
         return Mi
     
     
@@ -174,7 +198,7 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         '''
         r = y.shape[1]
         
-        u_yi = np.reshape(np.diag(X@beta@y.T),(N,1))@ones((1,r))
+        u_yi = np.reshape(np.diag((X@beta)@y.T),(N,1))@ones((1,r))
         u_k = X@beta
         
         dl = self.dLorenz(u_yi - u_k)
@@ -218,17 +242,17 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         # Format data for multi-class, if needed.
         if self.multi:
             y = self.labelsToOneHot(y) # Labels into one-hot.
-            X_o = np.insert(X_o, 0, 1,axis=1) # Prepend ones to input.
-        
+            X_o = self.prependOnes(X_o)
+            
         for k in self.kvars:
             X = X_o
-            M = X.shape[1]-1
-            N = X.shape[0]
+            N, M = X.shape
+            r = y.shape[1]
             
             if self.multi:
-                beta = zeros((X.shape[1],y.shape[1]))
+                beta = zeros((M,r))
             else:
-                beta = zeros(X.shape[1])
+                beta = zeros(M)
             
             save_indices_perm = list(range(len(beta)))
             
@@ -238,7 +262,6 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
                 
                 if self.multi:
                     beta, lloss = self.multiclass_update(N, X, y, beta, l=True)
-                    lloss = (-1)*lloss
                 else:
                     beta, lloss = self.update(N, X, y, beta, l=True)
                 
@@ -292,7 +315,6 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
             - Array of arrays, each indicating probability for each class for
             every input sample, if prob=True
         '''
-        X = check_array(X)
         
         if k_ind==-1:
             indices = self.SI_sets[self.best_run_ind]
@@ -303,14 +325,10 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         
         # For multi-class prediction.
         if self.multi:
-            X = np.insert(X, 0, 1,axis=1) # Prepend ones to input.
+            X = self.prependOnes(X)
             X = X[:,indices]
-            #X = X[:,[i-1 for i in indices]]
-            if prob:
-                return self.softmax_prob(X, weights)
-            else:
-                return self.softmax(X, weights)
-        
+            return self.softmax(X@weights, prob=prob)
+            
         # For binary-class prediction.
         X = X[:,indices]
         if prob:
@@ -341,8 +359,8 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         print ('-----------------+----------------+----------------')
         
         for num in range(len(self.kvars)):
-            train_error = (1 - np.mean(self.predict(x_train,num)==y_train))*100
-            test_error = (1 - np.mean(self.predict(x_test,num)==y_test))*100
+            train_error = (1 - np.mean(self.predict(x_train,k_ind=num)==y_train))*100
+            test_error = (1 - np.mean(self.predict(x_test,k_ind=num)==y_test))*100
             
             f_kvars = "{:03.0f}".format(self.kvars[num])
             f_train_error = "{:05.2f}".format(train_error)
@@ -384,22 +402,55 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
 
 
 
-def normalize(train_feat, test_feat):
+def normalize(train_feat, test_feat=None, std_sclr=None):
+    '''
+    A few ways to normalize the data. The non-StandardScaler() methods I made 
+    from scratch, and should be able to handle zero values in the event of sparse data
     
-    train_feat = array(train_feat)
-    test_feat = array(test_feat)
+    Parameters:
+        - train_feat: Array-like feature data. Does not actually have to only
+        be training data.
+        - test_feat: Array-like feature data or None. If values are provided,
+        it is normalized using the mean and std deviation of the training data.
+        So if it is desired to normalize using its own mean/stddev, then pass
+        testing data alone to train_feat.
+        - std_sclr: Boolean, if True, will use StandardScaler() to normalize.
+    '''
     
-    mean=list(np.mean(test_feat,0))
-    stddev=np.std(test_feat,0)
+    if test_feat is not None:
+        if std_sclr:
+            s = StandardScaler()
+            s.fit(train_feat)
+            train_feat=s.transform(train_feat)
+            test_feat=s.transform(test_feat)
+            return train_feat, test_feat
+        else:
+            train_feat = array(train_feat)
+            test_feat = array(test_feat)
+            
+            mean=list(np.mean(test_feat,0))
+            stddev=np.std(test_feat,0)
+            
+            zerocols=(stddev!=0)
+            stddev = list(stddev)
+            
+            for val in range(len(zerocols)):
+                if zerocols[val]:
+                    train_feat[:,val]=(train_feat[:,val]-mean[val])/stddev[val]
+                    test_feat[:,val]=(test_feat[:,val]-mean[val])/stddev[val]
+            
+            return train_feat, test_feat
     
-    zerocols=(stddev!=0)
-    stddev = list(stddev)
-    
-    for val in range(len(zerocols)):
-        if zerocols[val]:
-            train_feat[:,val]=(train_feat[:,val]-mean[val])/stddev[val]
-            test_feat[:,val]=(test_feat[:,val]-mean[val])/stddev[val]
-    
-    return train_feat, test_feat
-
-#print (check_estimator(FSAEstimator))
+    else:
+        mean=list(np.mean(train_feat,0))
+        stddev=np.std(train_feat,0)
+        
+        zerocols=(stddev!=0)
+        stddev = list(stddev)
+        
+        for val in range(len(zerocols)):
+            if zerocols[val]:
+                train_feat[:,val]=(train_feat[:,val]-mean[val])/stddev[val]
+        
+        return train_feat
+        
