@@ -166,12 +166,12 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
             - Floating point loss value, returned only if l is True.
         '''
         ybx = y*(X@beta)
-        
-        dLdB = (1/N)*X.T@((ybx<=1)*2*((ybx-1)/(1 + (ybx-1)**2))*y) + 2*self.s*beta
+        dLdB = (1/N)*X.T@(self.dLorenz(ybx)*y) + 2*self.s*beta
         beta_new = array(beta) - self.eta*dLdB
         
         if l:
-            loss = self.fullLorenzLoss(N, ybx, beta_new)
+            ll = self.lorenzLoss(ybx)
+            loss = self.fullLorenzLoss(N, ll, beta_new)
             return beta_new, loss
         
         return beta_new
@@ -218,7 +218,7 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         return beta_new
 
     
-    def fit(self, X_o, y, stop_crit=1e-4, verbose=True, sample_weight=None):
+    def fit(self, X_o, y, stop_crit=None, verbose=True, sample_weight=None):
         '''
         Training/fitting function.
         
@@ -247,9 +247,9 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
         for k in self.kvars:
             X = X_o
             N, M = X.shape
-            r = y.shape[1]
             
             if self.multi:
+                r = y.shape[1]
                 beta = zeros((M,r))
             else:
                 beta = zeros(M)
@@ -270,7 +270,7 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
                 if self.multi:
                     sorter = [[np.linalg.norm(beta[i], ord=1), save_indices_perm[i], i] for i in range(len(beta))]
                 else:
-                    sorter = [[np.abs(beta[i]), save_indices_perm[i], i] for i in range(len(beta))]
+                    sorter = [[np.linalg.norm(beta, ord=1), save_indices_perm[i], i] for i in range(len(beta))]
                 
                 sorter.sort(key=lambda x: x[0], reverse=True)
                 
@@ -282,9 +282,9 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
                 
                 loss.append(lloss)
                 
-                # Stopping criterion.
-                if len(loss)>50 and (np.mean(loss[-50:-45])-np.mean(loss[-5:]))/np.mean(loss[-50:-45]) < stop_crit:
-                    break
+                if stop_crit:
+                    if len(loss)>50 and (np.mean(loss[-50:-45])-np.mean(loss[-5:]))/np.mean(loss[-50:-45]) < stop_crit:
+                        break
                 
                 if step%100==0 and verbose:
                     print('Iteration #%s | # of Features: %s | k: %s ' % (str(step),str(len(beta)),str(k)))
@@ -328,7 +328,7 @@ class FSAEstimator(BaseEstimator, ClassifierMixin):
             X = self.prependOnes(X)
             X = X[:,indices]
             return self.softmax(X@weights, prob=prob)
-            
+        
         # For binary-class prediction.
         X = X[:,indices]
         if prob:
@@ -454,3 +454,20 @@ def normalize(train_feat, test_feat=None, std_sclr=None):
         
         return train_feat
         
+
+#print (check_estimator(FSAEstimator))
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
